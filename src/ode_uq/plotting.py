@@ -153,12 +153,12 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
         results = sobol_results[index_type]
         
         # Time series plot
-        timeseries_fig = create_sobol_timeseries_plot(
+        timeseries_fig = _create_sobol_timeseries_plot(
             results, selected_output, dynamical_system.times, input_names, index_type, selected_inputs
         )
         
         # Functional outputs bar chart - pass the selected functional output
-        functional_fig = create_functional_outputs_bar_chart(
+        functional_fig = _create_functional_outputs_bar_chart(
             results, functional_names, input_names, index_type, selected_functional_output
         )
         
@@ -167,7 +167,7 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
     return app
 
 
-def create_sobol_timeseries_plot(results, selected_output, times, input_names, index_type, selected_inputs=None):
+def _create_sobol_timeseries_plot(results, selected_output, times, input_names, index_type, selected_inputs=None):
     """Create time series plot of Sobol indices."""
     if not selected_output:
         return go.Figure()
@@ -236,7 +236,7 @@ def create_sobol_timeseries_plot(results, selected_output, times, input_names, i
     return fig
 
 
-def create_functional_outputs_bar_chart(results, functional_names, input_names, index_type, selected_functional_output=None):
+def _create_functional_outputs_bar_chart(results, functional_names, input_names, index_type, selected_functional_output=None):
     """Create bar chart of Sobol indices for functional outputs."""
     if not functional_names or not results.functional_outputs:
         return go.Figure()
@@ -324,27 +324,72 @@ def run_sobol_dashboard(sobol_results, dynamical_system, port=8051, debug=False)
     app.run(port=port, debug=debug)
 
 
-def plot_state_trajectories_static(times, state_dict, max_samples=100, opacity=0.3):
+def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories=None, max_samples=100, opacity=0.3):
     """
-    Create static interactive plots for sampled state trajectories.
+    Create static interactive plots for sampled state trajectories from SimulationResults.
+    Each trajectory gets its own subplot, ordered by the trajectory_options order.
     
     Args:
-        times: array-like, shape (num_times,) - time points
-        state_dict: dict of state_name -> array of shape (num_samples, num_times)
+        mc_results: SimulationResults object
+        selected_trajectories: list of trajectory keys to plot (if None, plots all)
         max_samples: int - maximum number of samples to plot (for performance)
         opacity: float - opacity of trajectory lines
     
     Returns:
-        plotly Figure object with subplots for each state variable
+        plotly Figure object with subplots for each selected trajectory
     """
     if not PLOTLY_AVAILABLE:
         raise ImportError("plotly is required for plotting. Install with: pip install plotly")
     
-    state_names = list(state_dict.keys())
-    num_states = len(state_names)
+    # Build the complete trajectory order (states first, then outputs)
+    trajectory_order = []
+    trajectory_data = {}
+    
+    # Add states in their natural order
+    if mc_results.states is not None:
+        for state_name, state_data in mc_results.states.items():
+            key = f"state_{state_name}"
+            trajectory_order.append(key)
+            trajectory_data[key] = {'data': state_data, 'title': f"State: {state_name}"}
+    
+    # Add pointwise outputs in their natural order
+    if mc_results.pointwise_outputs is not None:
+        for output_name, output_data in mc_results.pointwise_outputs.items():
+            key = f"output_{output_name}"
+            trajectory_order.append(key)
+            trajectory_data[key] = {'data': output_data, 'title': f"Output: {output_name}"}
+    
+    # Filter to selected trajectories if specified, maintaining order
+    if selected_trajectories is not None:
+        selected_keys = [key for key in trajectory_order if key in selected_trajectories]
+    else:
+        selected_keys = trajectory_order
+    
+    if not selected_keys:
+        # Return empty figure
+        fig = go.Figure()
+        fig.update_layout(
+            title="No trajectories selected",
+            xaxis_title="Time",
+            yaxis_title="Value",
+            template="plotly_white"
+        )
+        return fig
+    
+    num_plots = len(selected_keys)
+    
+    # Create subplots
+    subplot_titles = [trajectory_data[key]['title'] for key in selected_keys]
+    fig = sp.make_subplots(
+        rows=num_plots, 
+        cols=1,
+        subplot_titles=subplot_titles,
+        shared_xaxes=True,
+        vertical_spacing=0.15 / max(1, num_plots - 1) if num_plots > 1 else 0.1
+    )
     
     # Get the actual number of samples to plot
-    actual_samples = min(max_samples, min([state_dict[name].shape[0] for name in state_names]))
+    actual_samples = min(max_samples, min([trajectory_data[key]['data'].shape[0] for key in selected_keys]))
     
     # Generate a color palette for consistent coloring across subplots
     import plotly.colors as colors
@@ -353,23 +398,15 @@ def plot_state_trajectories_static(times, state_dict, max_samples=100, opacity=0
     if actual_samples > len(color_palette):
         color_palette = color_palette * (actual_samples // len(color_palette) + 1)
     
-    # Create subplots
-    fig = sp.make_subplots(
-        rows=num_states, 
-        cols=1,
-        subplot_titles=state_names,
-        shared_xaxes=True,
-        vertical_spacing=0.1
-    )
-    
-    for i, state_name in enumerate(state_names):
-        samples = state_dict[state_name]
+    for i, key in enumerate(selected_keys):
+        samples = trajectory_data[key]['data']
+        title = trajectory_data[key]['title']
         
         # Add trajectory lines with consistent colors
         for j in range(actual_samples):
             fig.add_trace(
                 go.Scatter(
-                    x=times,
+                    x=mc_results.times,
                     y=samples[j],
                     mode='lines',
                     line=dict(width=1, color=color_palette[j]),
@@ -377,28 +414,28 @@ def plot_state_trajectories_static(times, state_dict, max_samples=100, opacity=0
                     name=f'Sample {j+1}',
                     showlegend=False,  # No legend for trajectory plots
                     legendgroup=f'sample_{j}',  # Group legend entries
-                    hovertemplate=f'{state_name}<br>Sample {j+1}<br>Time: %{{x}}<br>Value: %{{y}}<extra></extra>'
+                    hovertemplate=f'{title}<br>Sample {j+1}<br>Time: %{{x}}<br>Value: %{{y}}<extra></extra>'
                 ),
                 row=i+1, col=1
             )
         
-        # Update y-axis labels (extract just the name from title format)
-        axis_label = state_name.split('[')[1].rstrip(']') if '[' in state_name else state_name
+        # Update y-axis labels (extract just the name from title)
+        axis_label = title.split(': ')[1] if ': ' in title else title
         fig.update_yaxes(title_text=axis_label, row=i+1, col=1)
     
     # Update x-axis label for bottom plot
-    fig.update_xaxes(title_text="Time", row=num_states, col=1)
+    fig.update_xaxes(title_text="Time", row=num_plots, col=1)
     
     # Update layout
     fig.update_layout(
-        height=300 * num_states,
+        height=300 * num_plots,
         hovermode='closest'
     )
     
     return fig
 
 
-def plot_trajectories_from_mc_results(mc_results, max_samples=100, opacity=0.3):
+def _plot_trajectories_from_mc_results(mc_results, max_samples=100, opacity=0.3):
     """
     Create static interactive plots for trajectories from SimulationResults.
     
@@ -413,26 +450,11 @@ def plot_trajectories_from_mc_results(mc_results, max_samples=100, opacity=0.3):
     if not PLOTLY_AVAILABLE:
         raise ImportError("plotly is required for plotting. Install with: pip install plotly")
     
-    # Combine states and pointwise outputs with proper titles
-    all_trajectories = {}
-    
-    # Add states
-    if mc_results.states is not None:
-        for state_name, state_data in mc_results.states.items():
-            all_trajectories[f"State[{state_name}]"] = state_data
-    
-    # Add pointwise outputs
-    if mc_results.pointwise_outputs is not None:
-        for output_name, output_data in mc_results.pointwise_outputs.items():
-            all_trajectories[f"Output[{output_name}]"] = output_data
-    
-    if not all_trajectories:
-        raise ValueError("No trajectory data found in SimulationResults")
-    
-    return plot_state_trajectories_static(mc_results.times, all_trajectories, max_samples, opacity)
+    # Use the new function that handles SimulationResults directly
+    return _plot_trajectories_from_simulation_results(mc_results, None, max_samples, opacity)
 
 
-def plot_histograms_from_mc_results(mc_results, bins=30):
+def _plot_histograms_from_mc_results(mc_results, bins=30):
     """
     Create histograms for functional outputs and parameters from SimulationResults.
     
@@ -477,7 +499,7 @@ def plot_histograms_from_mc_results(mc_results, bins=30):
         rows=rows,
         cols=cols,
         subplot_titles=list(histogram_data.keys()),
-        vertical_spacing=0.1,
+        vertical_spacing=0.15,  # Increased spacing to prevent title overlap
         horizontal_spacing=0.1
     )
     
@@ -514,20 +536,21 @@ def plot_histograms_from_mc_results(mc_results, bins=30):
         fig.update_yaxes(title_text="Count", row=row, col=col)
     
     fig.update_layout(
-        height=300 * rows,
+        height=350 * rows,  # Increased height per row to accommodate spacing
         showlegend=False
     )
     
     return fig
 
 
-def create_comprehensive_dash_app(mc_results, max_samples=100):
+def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
     """
     Create a comprehensive Dash web application for SimulationResults visualization.
     
     Args:
         mc_results: SimulationResults object
         max_samples: int - maximum number of samples to plot
+        max_plots: int - maximum number of trajectory plots to show at once
     
     Returns:
         Dash app instance
@@ -540,10 +563,36 @@ def create_comprehensive_dash_app(mc_results, max_samples=100):
     
     app = dash.Dash(__name__)
     
+    # Helper function to create plot data for selected trajectories
+    def plot_selected_trajectories(selected_keys):
+        """Create trajectory plot for selected trajectories using the new plotting function"""
+        return _plot_trajectories_from_simulation_results(mc_results, selected_keys, max_samples, 0.3)
+    
+    # Collect all available trajectory data
+    trajectory_options = []
+    trajectory_data = {}
+    
+    # Add states
+    if mc_results.states is not None:
+        for state_name, state_data in mc_results.states.items():
+            key = f"state_{state_name}"
+            label = f"State: {state_name}"
+            trajectory_options.append({'label': label, 'value': key})
+            trajectory_data[key] = {'data': state_data, 'label': label}
+    
+    # Add pointwise outputs
+    if mc_results.pointwise_outputs is not None:
+        for output_name, output_data in mc_results.pointwise_outputs.items():
+            key = f"output_{output_name}"
+            label = f"Output: {output_name}"
+            trajectory_options.append({'label': label, 'value': key})
+            trajectory_data[key] = {'data': output_data, 'label': label}
+    
+    # Select first few items by default (up to max_plots)
+    default_selection = [opt['value'] for opt in trajectory_options[:max_plots]]
+    
     # Create initial figures
-    trajectory_fig = plot_trajectories_from_mc_results(mc_results, max_samples)
-    histogram_fig = plot_histograms_from_mc_results(mc_results)
-    statistics_fig = plot_statistics_from_mc_results(mc_results)
+    histogram_fig = _plot_histograms_from_mc_results(mc_results)
     
     # Count total trajectories for slider
     total_trajectories = 0
@@ -569,7 +618,7 @@ def create_comprehensive_dash_app(mc_results, max_samples=100):
                     marks={i: str(i) for i in range(0, min(max_samples, total_trajectories)+1, 10)},
                     step=1
                 )
-            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'}),
+            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
             
             html.Div([
                 html.Label("Line opacity:"),
@@ -581,7 +630,7 @@ def create_comprehensive_dash_app(mc_results, max_samples=100):
                     marks={i/10: f'{i/10:.1f}' for i in range(1, 11, 2)},
                     step=0.1
                 )
-            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'}),
+            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
             
             html.Div([
                 html.Label("Display mode:"),
@@ -594,14 +643,27 @@ def create_comprehensive_dash_app(mc_results, max_samples=100):
                     value='trajectories',
                     style={'marginTop': '10px'}
                 )
-            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'}),
+            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
+            
+            html.Div([
+                html.Label(f"Select plots to show (max {max_plots}):", style={'fontWeight': 'bold'}),
+                html.Div(id='selection-info', style={'fontSize': '12px', 'color': '#666', 'marginBottom': '5px'}),
+                dcc.Checklist(
+                    id='trajectory-selector',
+                    options=trajectory_options,
+                    value=default_selection,
+                    style={'maxHeight': '200px', 'overflowY': 'auto', 'fontSize': '14px'},
+                    inputStyle={'marginRight': '5px'},
+                    labelStyle={'display': 'block', 'marginBottom': '5px'}
+                )
+            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block', 'verticalAlign': 'top'})
         ], style={'clearfix': 'both'}),
         
         # Trajectory/Statistics plot (toggleable)
         html.H2(id='trajectory-title', children="State and Output Trajectories", style={'marginTop': 40}),
         dcc.Graph(
             id='trajectories-plot',
-            figure=trajectory_fig,
+            figure=go.Figure(),  # Empty figure initially, will be populated by callback
             config={
                 'scrollZoom': True,
                 'displayModeBar': True,
@@ -626,27 +688,89 @@ def create_comprehensive_dash_app(mc_results, max_samples=100):
     
     app.layout = html.Div(components)
     
+    # Callback for updating selection info
+    @app.callback(
+        [Output('selection-info', 'children'),
+         Output('trajectory-selector', 'options')],
+        [Input('trajectory-selector', 'value')]
+    )
+    def update_selection_info(selected_trajectories):
+        num_selected = len(selected_trajectories) if selected_trajectories else 0
+        info_text = f"Selected: {num_selected}/{max_plots} plots"
+        
+        # Update options to disable/enable based on selection limit
+        updated_options = []
+        for opt in trajectory_options:
+            is_selected = opt['value'] in (selected_trajectories or [])
+            is_disabled = not is_selected and num_selected >= max_plots
+            
+            updated_opt = {
+                'label': opt['label'],
+                'value': opt['value'],
+                'disabled': is_disabled
+            }
+            updated_options.append(updated_opt)
+        
+        return info_text, updated_options
+    
     # Callback for updating trajectory plot and title
     @app.callback(
         [Output('trajectories-plot', 'figure'),
          Output('trajectory-title', 'children')],
         [Input('sample-slider', 'value'),
          Input('opacity-slider', 'value'),
-         Input('display-mode', 'value')]
+         Input('display-mode', 'value'),
+         Input('trajectory-selector', 'value')]
     )
-    def update_trajectory_plot(num_samples, opacity, display_mode):
+    def update_trajectory_plot(num_samples, opacity, display_mode, selected_trajectories):
+        if not selected_trajectories:
+            # Return empty figure if nothing selected
+            return go.Figure(), "No Trajectories Selected"
+        
         if display_mode == 'trajectories':
-            fig = plot_trajectories_from_mc_results(mc_results, num_samples, opacity)
-            title = "State and Output Trajectories"
+            # Use the new plotting function directly
+            fig = _plot_trajectories_from_simulation_results(mc_results, selected_trajectories, num_samples, opacity)
+            title = f"Selected Trajectories ({len(selected_trajectories)} plots)"
         else:  # statistics
-            fig = plot_statistics_from_mc_results(mc_results, max_samples=None)
-            title = "Trajectory Statistics"
+            # For statistics mode, create a custom plot with selected trajectories
+            # Create a temporary SimulationResults object with selected data
+            temp_states = {}
+            temp_pointwise = {}
+            
+            for key in selected_trajectories:
+                if key in trajectory_data:
+                    data = trajectory_data[key]['data']
+                    if key.startswith('state_'):
+                        state_name = key.replace('state_', '')
+                        temp_states[state_name] = data
+                    elif key.startswith('output_'):
+                        output_name = key.replace('output_', '')
+                        temp_pointwise[output_name] = data
+            
+            if temp_states or temp_pointwise:
+                # Create temporary SimulationResults object
+                from .up import SimulationResults
+                temp_results = SimulationResults(
+                    times=mc_results.times,
+                    states=temp_states if temp_states else None,
+                    pointwise_outputs=temp_pointwise if temp_pointwise else None,
+                    params=mc_results.params,
+                    init_state=mc_results.init_state,
+                    functional_outputs=mc_results.functional_outputs
+                )
+                
+                fig = _plot_statistics_from_mc_results(temp_results, max_samples=None)
+                title = f"Selected Trajectory Statistics ({len(selected_trajectories)} plots)"
+            else:
+                fig = go.Figure()
+                title = "No Valid Trajectories Selected"
+        
         return fig, title
     
     return app
 
 
-def plot_statistics_from_mc_results(mc_results, max_samples=None, percentiles=[5, 25, 50, 75, 95]):
+def _plot_statistics_from_mc_results(mc_results, max_samples=None, percentiles=[5, 25, 50, 75, 95]):
     """
     Plot statistics (percentiles) of trajectories from SimulationResults.
     
@@ -679,152 +803,10 @@ def plot_statistics_from_mc_results(mc_results, max_samples=None, percentiles=[5
     if not all_trajectories:
         raise ValueError("No trajectory data found in SimulationResults")
     
-    return plot_state_statistics(mc_results.times, all_trajectories, percentiles)
-    """
-    Create static interactive plots for sampled state trajectories.
-    
-    Args:
-        times: array-like, shape (num_times,) - time points
-        state_dict: dict of state_name -> array of shape (num_samples, num_times)
-        max_samples: int - maximum number of samples to plot (for performance)
-        opacity: float - opacity of trajectory lines
-    
-    Returns:
-        plotly Figure object with subplots for each state variable
-    """
-    if not PLOTLY_AVAILABLE:
-        raise ImportError("plotly is required for plotting. Install with: pip install plotly")
-    
-    state_names = list(state_dict.keys())
-    num_states = len(state_names)
-    
-    # Create subplots
-    fig = sp.make_subplots(
-        rows=num_states, 
-        cols=1,
-        subplot_titles=state_names,
-        shared_xaxes=True,
-        vertical_spacing=0.1
-    )
-    
-    for i, state_name in enumerate(state_names):
-        samples = state_dict[state_name]
-        num_samples = min(samples.shape[0], max_samples)
-        
-        # Add trajectory lines
-        for j in range(num_samples):
-            fig.add_trace(
-                go.Scatter(
-                    x=times,
-                    y=samples[j],
-                    mode='lines',
-                    line=dict(width=1),
-                    opacity=opacity,
-                    name=f'{state_name}_sample_{j+1}',
-                    showlegend=False,
-                    hovertemplate=f'{state_name}<br>Time: %{{x}}<br>Value: %{{y}}<extra></extra>'
-                ),
-                row=i+1, col=1
-            )
-        
-        # Update y-axis labels
-        fig.update_yaxes(title_text=state_name, row=i+1, col=1)
-    
-    # Update x-axis label for bottom plot
-    fig.update_xaxes(title_text="Time", row=num_states, col=1)
-    
-    # Update layout
-    fig.update_layout(
-        height=300 * num_states,
-        hovermode='closest'
-    )
-    
-    return fig
+    return _plot_state_statistics(mc_results.times, all_trajectories, percentiles)
 
 
-def create_dash_app(times, state_dict, max_samples=100):
-    """
-    Create a Dash web application for interactive visualization of state trajectories.
-    
-    Args:
-        times: array-like, shape (num_times,) - time points
-        state_dict: dict of state_name -> array of shape (num_samples, num_times)
-        max_samples: int - maximum number of samples to plot
-    
-    Returns:
-        Dash app instance
-    """
-    if not DASH_AVAILABLE:
-        raise ImportError("dash is required for web apps. Install with: pip install dash")
-    
-    if not PLOTLY_AVAILABLE:
-        raise ImportError("plotly is required for plotting. Install with: pip install plotly")
-    
-    app = dash.Dash(__name__)
-    
-    state_names = list(state_dict.keys())
-    
-    # Create initial figure
-    fig = plot_state_trajectories_static(times, state_dict, max_samples)
-    
-    # App layout
-    app.layout = html.Div([
-        html.H1("ODE Uncertainty Quantification - State Trajectories", 
-                style={'textAlign': 'center', 'marginBottom': 30}),
-        
-        html.Div([
-            html.Label("Number of samples to display:"),
-            dcc.Slider(
-                id='sample-slider',
-                min=1,
-                max=min(max_samples, max([state_dict[s].shape[0] for s in state_names])),
-                value=min(50, max([state_dict[s].shape[0] for s in state_names])),
-                marks={i: str(i) for i in range(0, min(max_samples, max([state_dict[s].shape[0] for s in state_names]))+1, 10)},
-                step=1
-            )
-        ], style={'margin': '20px', 'width': '48%', 'display': 'inline-block'}),
-        
-        html.Div([
-            html.Label("Line opacity:"),
-            dcc.Slider(
-                id='opacity-slider',
-                min=0.1,
-                max=1.0,
-                value=0.3,
-                marks={i/10: f'{i/10:.1f}' for i in range(1, 11, 2)},
-                step=0.1
-            )
-        ], style={'margin': '20px', 'width': '48%', 'float': 'right', 'display': 'inline-block'}),
-        
-        dcc.Graph(
-            id='trajectories-plot',
-            figure=fig,
-            config={
-                'scrollZoom': True,
-                'displayModeBar': True,
-                'displaylogo': False
-            }
-        )
-    ])
-    
-    # Callback for updating plot
-    @app.callback(
-        Output('trajectories-plot', 'figure'),
-        [Input('sample-slider', 'value'),
-         Input('opacity-slider', 'value')]
-    )
-    def update_plot(num_samples, opacity):
-        # Create subset of state_dict with limited samples
-        subset_state_dict = {}
-        for state_name in state_names:
-            subset_state_dict[state_name] = state_dict[state_name][:num_samples]
-        
-        return plot_state_trajectories_static(times, subset_state_dict, num_samples, opacity)
-    
-    return app
-
-
-def plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
+def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
     """
     Plot statistics (percentiles) of the state trajectories over time.
     
@@ -925,25 +907,18 @@ def save_plot_html(fig, filename="trajectories.html"):
     print(f"Plot saved as {filename}")
 
 
-def run_dash_app(mc_results_or_times, state_dict=None, max_samples=100, debug=True, port=8050):
+def run_comprehensive_dashboard(mc_results, max_samples=100, debug=True, port=8050):
     """
     Convenience function to create and run a Dash app.
     
     Args:
-        mc_results_or_times: SimulationResults object OR array-like times (for backward compatibility)
-        state_dict: dict (only used if first arg is times, for backward compatibility)
+        mc_results: SimulationResults object
         max_samples: int - maximum number of samples to plot
         debug: bool - run in debug mode
         port: int - port to run the server on
     """
-    # Check if first argument is SimulationResults
-    if hasattr(mc_results_or_times, 'times') and hasattr(mc_results_or_times, 'states'):
-        # New interface: SimulationResults object
-        app = create_comprehensive_dash_app(mc_results_or_times, max_samples)
-    else:
-        # Backward compatibility: times and state_dict
-        if state_dict is None:
-            raise ValueError("state_dict must be provided when using times array")
-        app = create_dash_app(mc_results_or_times, state_dict, max_samples)
+    if not hasattr(mc_results, 'times') or not hasattr(mc_results, 'states'):
+        raise ValueError("mc_results must be a SimulationResults object")
     
+    app = create_comprehensive_dashboard(mc_results, max_samples)
     app.run(debug=debug, port=port)
