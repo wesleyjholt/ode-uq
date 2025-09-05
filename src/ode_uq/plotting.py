@@ -65,7 +65,7 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
         # Controls
         html.Div([
             html.Div([
-                html.Label("Sobol Index Type:"),
+                html.Label("Sobol Index Type:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
                 dcc.RadioItems(
                     id='index-type',
                     options=[
@@ -73,12 +73,13 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
                         {'label': 'Total-effect (ST)', 'value': 'ST'}
                     ],
                     value='S1',
-                    inline=True
+                    inline=True,
+                    style={'marginTop': '5px'}
                 )
-            ], style={'width': '48%', 'display': 'inline-block'}),
+            ], style={'width': '30%', 'display': 'inline-block', 'paddingRight': '20px'}),
             
             html.Div([
-                html.Label("Output to Display:"),
+                html.Label("Output to Display:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
                 dcc.Dropdown(
                     id='output-selector',
                     options=[
@@ -86,15 +87,52 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
                     ] + [
                         {'label': f'Pointwise: {name}', 'value': f'pointwise_{name}'} for name in pointwise_names
                     ],
-                    value=f'state_{state_names[0]}' if state_names else None
+                    value=f'state_{state_names[0]}' if state_names else None,
+                    style={'fontSize': '14px'}
                 )
-            ], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
-        ], style={'margin': '20px'}),
+            ], style={'width': '33%', 'display': 'inline-block', 'paddingRight': '20px'}),
+            
+            html.Div([
+                html.Label("Inputs to Show:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                dcc.Checklist(
+                    id='input-selector',
+                    options=[
+                        {'label': f'Param: {name}', 'value': f'param_{name}'} for name in param_names
+                    ] + [
+                        {'label': f'Init: {name}', 'value': f'init_{name}'} for name in init_state_names
+                    ],
+                    value=[f'param_{name}' for name in param_names] + [f'init_{name}' for name in init_state_names],  # All selected by default
+                    inline=False,  # Stack vertically for better spacing
+                    style={
+                        'fontSize': '14px',
+                        'lineHeight': '1.8',  # Better spacing between items
+                        'marginTop': '5px'
+                    },
+                    inputStyle={'marginRight': '8px', 'marginLeft': '0px'},  # Space between checkbox and label
+                    labelStyle={'marginBottom': '8px', 'display': 'block'}  # Space between each option
+                )
+            ], style={'width': '33%', 'display': 'inline-block'})
+        ], style={'margin': '20px', 'padding': '15px', 'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
         
         # Time series plot
         html.Div([
             dcc.Graph(id='sobol-timeseries')
         ], style={'width': '100%', 'margin': '20px'}),
+        
+        # Functional outputs control section
+        html.Div([
+            html.Div([
+                html.Label("Functional Output to Display:", style={'fontWeight': 'bold', 'marginBottom': '5px'}),
+                dcc.Dropdown(
+                    id='functional-output-selector',
+                    options=[
+                        {'label': f'Functional: {name}', 'value': name} for name in functional_names
+                    ],
+                    value=functional_names[0] if functional_names else None,
+                    style={'fontSize': '14px'}
+                )
+            ], style={'width': '40%', 'display': 'inline-block'})
+        ], style={'margin': '20px', 'padding': '15px', 'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}) if functional_names else html.Div(),
         
         # Functional outputs bar chart
         html.Div([
@@ -107,19 +145,21 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
         [Output('sobol-timeseries', 'figure'),
          Output('functional-outputs-bar', 'figure')],
         [Input('index-type', 'value'),
-         Input('output-selector', 'value')]
+         Input('output-selector', 'value'),
+         Input('input-selector', 'value'),
+         Input('functional-output-selector', 'value')]
     )
-    def update_plots(index_type, selected_output):
+    def update_plots(index_type, selected_output, selected_inputs, selected_functional_output):
         results = sobol_results[index_type]
         
         # Time series plot
         timeseries_fig = create_sobol_timeseries_plot(
-            results, selected_output, dynamical_system.times, input_names, index_type
+            results, selected_output, dynamical_system.times, input_names, index_type, selected_inputs
         )
         
-        # Functional outputs bar chart
+        # Functional outputs bar chart - pass the selected functional output
         functional_fig = create_functional_outputs_bar_chart(
-            results, functional_names, input_names, index_type
+            results, functional_names, input_names, index_type, selected_functional_output
         )
         
         return timeseries_fig, functional_fig
@@ -127,10 +167,16 @@ def create_sobol_dashboard(sobol_results, dynamical_system, port=8051):
     return app
 
 
-def create_sobol_timeseries_plot(results, selected_output, times, input_names, index_type):
+def create_sobol_timeseries_plot(results, selected_output, times, input_names, index_type, selected_inputs=None):
     """Create time series plot of Sobol indices."""
     if not selected_output:
         return go.Figure()
+    
+    # If no inputs selected, show all
+    if selected_inputs is None:
+        param_names = list(results.states[list(results.states.keys())[0]].params.keys()) if results.states else []
+        init_state_names = [k for k, v in results.states[list(results.states.keys())[0]].init_state.items() if v is not None] if results.states else []
+        selected_inputs = [f'param_{name}' for name in param_names] + [f'init_{name}' for name in init_state_names]
     
     output_type, output_name = selected_output.split('_', 1)
     
@@ -153,7 +199,8 @@ def create_sobol_timeseries_plot(results, selected_output, times, input_names, i
     # Plot parameters
     if output_results.params:
         for i, param_name in enumerate(output_results.params.keys()):
-            if param_name in input_names:
+            param_key = f'param_{param_name}'
+            if param_name in input_names and param_key in selected_inputs:
                 color = colors[i % len(colors)]
                 fig.add_trace(go.Scatter(
                     x=times,
@@ -167,7 +214,8 @@ def create_sobol_timeseries_plot(results, selected_output, times, input_names, i
     if output_results.init_state:
         param_count = len(output_results.params) if output_results.params else 0
         for i, (init_name, init_values) in enumerate(output_results.init_state.items()):
-            if init_values is not None and init_name in input_names:
+            init_key = f'init_{init_name}'
+            if init_values is not None and init_name in input_names and init_key in selected_inputs:
                 color = colors[(param_count + i) % len(colors)]
                 fig.add_trace(go.Scatter(
                     x=times,
@@ -188,17 +236,23 @@ def create_sobol_timeseries_plot(results, selected_output, times, input_names, i
     return fig
 
 
-def create_functional_outputs_bar_chart(results, functional_names, input_names, index_type):
+def create_functional_outputs_bar_chart(results, functional_names, input_names, index_type, selected_functional_output=None):
     """Create bar chart of Sobol indices for functional outputs."""
     if not functional_names or not results.functional_outputs:
         return go.Figure()
+    
+    # If no specific functional output selected, use the first one or show all
+    if selected_functional_output is None:
+        target_functional_names = functional_names
+    else:
+        target_functional_names = [selected_functional_output] if selected_functional_output in functional_names else functional_names
     
     fig = go.Figure()
     
     # Colors for different inputs
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     
-    for func_name in functional_names:
+    for func_name in target_functional_names:
         if func_name not in results.functional_outputs:
             continue
             
@@ -238,12 +292,18 @@ def create_functional_outputs_bar_chart(results, functional_names, input_names, 
             textposition='auto'
         ))
     
+    # Create title based on selection
+    if selected_functional_output and len(target_functional_names) == 1:
+        title = f'{index_type} Sobol Indices for {selected_functional_output}'
+    else:
+        title = f'{index_type} Sobol Indices for Functional Outputs'
+    
     fig.update_layout(
-        title=f'{index_type} Sobol Indices for Functional Outputs',
+        title=title,
         xaxis_title='Input Variables',
         yaxis_title=f'{index_type} Sobol Index',
         height=400,
-        showlegend=True if len(functional_names) > 1 else False
+        showlegend=True if len(target_functional_names) > 1 else False
     )
     
     return fig
