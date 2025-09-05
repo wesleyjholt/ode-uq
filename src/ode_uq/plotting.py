@@ -440,6 +440,120 @@ def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories
     return fig
 
 
+def _plot_overlay_trajectories(mc_results, selected_trajectories=None, max_samples=50, opacity=0.4):
+    """
+    Create an overlay plot with multiple trajectories on a single plot.
+    Each trajectory type gets a unique color.
+    
+    Args:
+        mc_results: SimulationResults object
+        selected_trajectories: list of trajectory keys to plot
+        max_samples: int - maximum number of samples to plot per trajectory
+        opacity: float - opacity of trajectory lines
+    
+    Returns:
+        plotly Figure object with overlaid trajectories
+    """
+    if not PLOTLY_AVAILABLE:
+        raise ImportError("plotly is required for plotting. Install with: pip install plotly")
+    
+    import plotly.graph_objects as go
+    import plotly.colors as colors
+    
+    # Build trajectory data
+    trajectory_data = {}
+    
+    # Add states
+    if mc_results.states is not None:
+        for state_name, state_data in mc_results.states.items():
+            key = f'state_{state_name}'
+            trajectory_data[key] = {
+                'data': state_data,
+                'title': f'State: {state_name}',
+                'name': state_name
+            }
+    
+    # Add pointwise outputs
+    if mc_results.pointwise_outputs is not None:
+        for output_name, output_data in mc_results.pointwise_outputs.items():
+            key = f'output_{output_name}'
+            trajectory_data[key] = {
+                'data': output_data,
+                'title': f'Output: {output_name}',
+                'name': output_name
+            }
+    
+    if not selected_trajectories:
+        return go.Figure().add_annotation(
+            text="No trajectories selected for overlay plot.<br>Use the dropdown to select trajectories.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=14)
+        )
+    
+    # Filter to selected trajectories
+    selected_data = {key: trajectory_data[key] for key in selected_trajectories if key in trajectory_data}
+    
+    if not selected_data:
+        return go.Figure().add_annotation(
+            text="Selected trajectories not found in data.",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=14)
+        )
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Use a distinct color palette for overlay plot (different from the type-based colors)
+    color_palette = colors.qualitative.Set3  # More distinct colors for overlay
+    if len(selected_data) > len(color_palette):
+        color_palette = color_palette * (len(selected_data) // len(color_palette) + 1)
+    
+    # Get the actual number of samples to plot
+    actual_samples = min(max_samples, min([data['data'].shape[0] for data in selected_data.values()]))
+    
+    # Plot each selected trajectory with its own color
+    for i, (key, traj_info) in enumerate(selected_data.items()):
+        samples = traj_info['data']
+        traj_color = color_palette[i]
+        
+        # Add all samples for this trajectory
+        for j in range(actual_samples):
+            fig.add_trace(
+                go.Scatter(
+                    x=mc_results.times,
+                    y=samples[j],
+                    mode='lines',
+                    line=dict(width=1.5, color=traj_color),
+                    opacity=opacity,
+                    name=traj_info['name'],
+                    legendgroup=traj_info['name'],
+                    showlegend=(j == 0),  # Only show legend for first sample of each trajectory
+                    hovertemplate=f"{traj_info['title']}<br>Sample {j+1}<br>Time: %{{x}}<br>Value: %{{y}}<extra></extra>"
+                )
+            )
+    
+    # Update layout
+    fig.update_layout(
+        title="Overlaid Trajectory Samples",
+        xaxis_title="Time",
+        yaxis_title="Value",
+        height=500,
+        hovermode='closest',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.01
+        )
+    )
+    
+    return fig
+
+
 def _plot_trajectories_from_mc_results(mc_results, max_samples=100, opacity=0.3):
     """
     Create static interactive plots for trajectories from SimulationResults.
@@ -881,6 +995,44 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
         ])
     ]
     
+    # Add overlay trajectory plot section
+    # Get all available trajectories for the dropdown
+    overlay_options = []
+    if mc_results.states is not None:
+        for state_name in mc_results.states.keys():
+            overlay_options.append({'label': f'State: {state_name}', 'value': f'state_{state_name}'})
+    if mc_results.pointwise_outputs is not None:
+        for output_name in mc_results.pointwise_outputs.keys():
+            overlay_options.append({'label': f'Output: {output_name}', 'value': f'output_{output_name}'})
+    
+    # Add overlay plot if trajectories exist
+    if overlay_options:
+        components.extend([
+            html.H2("Overlay Trajectory Plot", style={'marginTop': 40, 'textAlign': 'center'}),
+            html.Div([
+                html.Div([
+                    html.Label("Select trajectories to overlay:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                    dcc.Dropdown(
+                        id='overlay-trajectory-selector',
+                        options=overlay_options,
+                        value=[opt['value'] for opt in overlay_options[:3]],  # Default to first 3
+                        multi=True,
+                        placeholder="Select trajectories to overlay...",
+                        style={'fontSize': '14px'}
+                    )
+                ], style={'width': '50%', 'margin': '0 auto', 'textAlign': 'center', 'marginBottom': '20px'}),
+                dcc.Graph(
+                    id='overlay-plot',
+                    figure=go.Figure(),
+                    config={
+                        'scrollZoom': True,
+                        'displayModeBar': True,
+                        'displaylogo': False
+                    }
+                )
+            ])
+        ])
+    
     # Add histogram plot if data exists
     if histogram_fig is not None:
         components.extend([
@@ -1033,6 +1185,28 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
             )
         
         return samples_fig, statistics_fig
+    
+    # Callback for overlay plot
+    if overlay_options:
+        @app.callback(
+            Output('overlay-plot', 'figure'),
+            [Input('overlay-trajectory-selector', 'value'),
+             Input('sample-slider', 'value'),
+             Input('opacity-slider', 'value')]
+        )
+        def update_overlay_plot(selected_overlays, num_samples, opacity):
+            if not selected_overlays:
+                empty_fig = go.Figure()
+                empty_fig.add_annotation(
+                    text="No trajectories selected for overlay.<br>Use the dropdown to select trajectories.",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, xanchor='center', yanchor='middle',
+                    showarrow=False,
+                    font=dict(size=14)
+                )
+                return empty_fig
+            
+            return _plot_overlay_trajectories(mc_results, selected_overlays, num_samples, opacity)
     
     # Add histogram callback if histogram options exist
     if all_histogram_keys:
