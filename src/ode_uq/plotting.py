@@ -378,14 +378,16 @@ def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories
     
     num_plots = len(selected_keys)
     
-    # Create subplots
+    # Create subplots with fixed vertical spacing
     subplot_titles = [trajectory_data[key]['title'] for key in selected_keys]
+    # Fixed spacing between subplots (in fraction of total height)
+    fixed_spacing = 0.02  # 2% of total height between plots
     fig = sp.make_subplots(
         rows=num_plots, 
         cols=1,
         subplot_titles=subplot_titles,
         shared_xaxes=True,
-        vertical_spacing=0.15 / max(1, num_plots - 1) if num_plots > 1 else 0.1
+        vertical_spacing=fixed_spacing
     )
     
     # Get the actual number of samples to plot
@@ -426,9 +428,11 @@ def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories
     # Update x-axis label for bottom plot
     fig.update_xaxes(title_text="Time", row=num_plots, col=1)
     
-    # Update layout
+    # Update layout with fixed height per plot
+    fixed_height_per_plot = 300  # Fixed height in pixels per subplot
+    total_height = fixed_height_per_plot * num_plots
     fig.update_layout(
-        height=300 * num_plots,
+        height=total_height,
         hovermode='closest'
     )
     
@@ -873,7 +877,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
                     }
                 )
             ], style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '2%'})
-        ])
+        ], style={'minHeight': '400px', 'overflow': 'visible'})
     ]
     
     # Add histogram plot if data exists
@@ -1027,6 +1031,16 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
                 font=dict(size=14)
             )
         
+        # Ensure both plots have the same height for side-by-side display
+        num_subplots = len(selected_trajectories)
+        if num_subplots > 0:
+            fixed_height_per_plot = 300
+            total_height = fixed_height_per_plot * num_subplots
+            
+            # Update both figures to have the same height
+            samples_fig.update_layout(height=total_height)
+            statistics_fig.update_layout(height=total_height)
+        
         return samples_fig, statistics_fig
     
     # Add histogram callback if histogram options exist
@@ -1104,13 +1118,13 @@ def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
     state_names = list(state_dict.keys())
     num_states = len(state_names)
     
-    # Create subplots
+    # Create subplots with fixed spacing
     fig = sp.make_subplots(
         rows=num_states, 
         cols=1,
         subplot_titles=state_names,
         shared_xaxes=True,
-        vertical_spacing=0.1
+        vertical_spacing=0.02  # Fixed 2% spacing
     )
     
     colors = ['rgba(0,100,80,0.2)', 'rgba(0,176,246,0.2)', 'rgba(231,107,243,1)', 
@@ -1163,9 +1177,11 @@ def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
     # Update x-axis label for bottom plot
     fig.update_xaxes(title_text="Time", row=num_states, col=1)
     
-    # Update layout
+    # Update layout with fixed height per plot
+    fixed_height_per_plot = 300  # Fixed height in pixels per subplot
+    total_height = fixed_height_per_plot * num_states
     fig.update_layout(
-        height=300 * num_states,
+        height=total_height,
         hovermode='closest'
     )
     
