@@ -454,13 +454,14 @@ def _plot_trajectories_from_mc_results(mc_results, max_samples=100, opacity=0.3)
     return _plot_trajectories_from_simulation_results(mc_results, None, max_samples, opacity)
 
 
-def _plot_histograms_from_mc_results(mc_results, bins=30):
+def _plot_histograms_from_mc_results(mc_results, bins=30, selected_histograms=None):
     """
     Create histograms for functional outputs and parameters from SimulationResults.
     
     Args:
         mc_results: SimulationResults object
         bins: int - number of bins for histograms
+        selected_histograms: list of str - keys of histograms to plot (if None, plot all)
     
     Returns:
         plotly Figure object with histograms
@@ -469,81 +470,189 @@ def _plot_histograms_from_mc_results(mc_results, bins=30):
         raise ImportError("plotly is required for plotting. Install with: pip install plotly")
     
     # Collect all histogram data with proper titles
-    histogram_data = {}
+    all_histogram_data = {}
     
     # Add functional outputs
     if mc_results.functional_outputs is not None:
         for output_name, output_data in mc_results.functional_outputs.items():
-            histogram_data[f"Output[{output_name}]"] = np.array(output_data)
+            key = f"output_{output_name}"
+            all_histogram_data[key] = {
+                'data': np.array(output_data),
+                'title': f"Output[{output_name}]",
+                'color': '#1f77b4'  # Blue for outputs
+            }
     
     # Add parameters
     if mc_results.params is not None:
         for param_name, param_data in mc_results.params.items():
-            histogram_data[f"Parameter[{param_name}]"] = np.array(param_data)
+            key = f"param_{param_name}"
+            all_histogram_data[key] = {
+                'data': np.array(param_data),
+                'title': f"Parameter[{param_name}]",
+                'color': '#ff7f0e'  # Orange for parameters
+            }
     
     # Add initial states
     if mc_results.init_state is not None:
         for state_name, state_data in mc_results.init_state.items():
-            histogram_data[f"InitialState[{state_name}]"] = np.array(state_data)
+            key = f"init_{state_name}"
+            all_histogram_data[key] = {
+                'data': np.array(state_data),
+                'title': f"InitialState[{state_name}]",
+                'color': '#2ca02c'  # Green for initial states
+            }
+    
+    if not all_histogram_data:
+        return None
+    
+    # Filter to selected histograms if specified
+    if selected_histograms is not None:
+        histogram_data = {k: v for k, v in all_histogram_data.items() if k in selected_histograms}
+    else:
+        histogram_data = all_histogram_data
     
     if not histogram_data:
-        return None
+        return go.Figure()  # Return empty figure if no selected histograms
     
     # Calculate subplot layout
     num_hists = len(histogram_data)
     cols = min(3, num_hists)
     rows = (num_hists + cols - 1) // cols
     
+    # Ensure vertical spacing doesn't exceed the limit
+    max_vertical_spacing = 1.0 / (rows - 1) if rows > 1 else 0.15
+    vertical_spacing = min(0.15, max_vertical_spacing * 0.8)  # Use 80% of max to be safe
+    
     # Create subplots
     fig = sp.make_subplots(
         rows=rows,
         cols=cols,
-        subplot_titles=list(histogram_data.keys()),
-        vertical_spacing=0.15,  # Increased spacing to prevent title overlap
+        subplot_titles=[item['title'] for item in histogram_data.values()],
+        vertical_spacing=vertical_spacing,
         horizontal_spacing=0.1
     )
     
     # Add histograms
-    for i, (name, data) in enumerate(histogram_data.items()):
+    for i, (key, item) in enumerate(histogram_data.items()):
         row = i // cols + 1
         col = i % cols + 1
         
-        # Determine color based on data type
-        if name.startswith('Output['):
-            color = '#1f77b4'  # Blue for outputs
-        elif name.startswith('Parameter['):
-            color = '#ff7f0e'  # Orange for parameters
-        elif name.startswith('InitialState['):
-            color = '#2ca02c'  # Green for initial states
-        else:
-            color = '#d62728'  # Red for unknown types
-        
         fig.add_trace(
             go.Histogram(
-                x=data,
+                x=item['data'],
                 nbinsx=bins,
-                name=name,
+                name=item['title'],
                 showlegend=False,
-                marker_color=color,
-                hovertemplate=f'{name}<br>Value: %{{x}}<br>Count: %{{y}}<extra></extra>'
+                marker_color=item['color'],
+                hovertemplate=f'{item["title"]}<br>Value: %{{x}}<br>Count: %{{y}}<extra></extra>'
             ),
             row=row, col=col
         )
         
         # Update axes labels (extract just the name from title format)
-        axis_label = name.split('[')[1].rstrip(']') if '[' in name else name
+        axis_label = item['title'].split('[')[1].rstrip(']') if '[' in item['title'] else key
         fig.update_xaxes(title_text=axis_label, row=row, col=col)
         fig.update_yaxes(title_text="Count", row=row, col=col)
     
     fig.update_layout(
-        height=350 * rows,  # Increased height per row to accommodate spacing
+        height=max(350 * rows, 400),  # Minimum height of 400
         showlegend=False
     )
     
     return fig
 
 
-def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
+def _get_histogram_options(mc_results):
+    """
+    Get all available histogram options from SimulationResults.
+    
+    Args:
+        mc_results: SimulationResults object
+    
+    Returns:
+        tuple: (options_list, all_keys_list) where options_list contains dicts for Dash dropdown
+               and all_keys_list contains the keys for default selection
+    """
+    options = []
+    all_keys = []
+    
+    # Add functional outputs
+    if mc_results.functional_outputs is not None:
+        for output_name in mc_results.functional_outputs.keys():
+            key = f"output_{output_name}"
+            label = f"Output: {output_name}"
+            options.append({'label': label, 'value': key})
+            all_keys.append(key)
+    
+    # Add parameters  
+    if mc_results.params is not None:
+        for param_name in mc_results.params.keys():
+            key = f"param_{param_name}"
+            label = f"Parameter: {param_name}"
+            options.append({'label': label, 'value': key})
+            all_keys.append(key)
+    
+    # Add initial states
+    if mc_results.init_state is not None:
+        for state_name in mc_results.init_state.keys():
+            key = f"init_{state_name}"
+            label = f"Initial State: {state_name}"
+            options.append({'label': label, 'value': key})
+            all_keys.append(key)
+    
+    return options, all_keys
+
+
+def _organize_options_by_type(mc_results):
+    """
+    Organize all trajectory and histogram options by value type.
+    
+    Returns:
+        Dictionary with separate lists for each type: states, pointwise_outputs, 
+        functional_outputs, parameters, initial_states
+    """
+    organized = {
+        'states': {'trajectory': [], 'histogram': []},
+        'pointwise_outputs': {'trajectory': [], 'histogram': []},
+        'functional_outputs': {'trajectory': [], 'histogram': []},
+        'parameters': {'trajectory': [], 'histogram': []},
+        'initial_states': {'trajectory': [], 'histogram': []}
+    }
+    
+    # Add states
+    if mc_results.states is not None:
+        for state_name in mc_results.states.keys():
+            traj_key = f"state_{state_name}"
+            organized['states']['trajectory'].append({'label': state_name, 'value': traj_key})
+    
+    # Add pointwise outputs
+    if mc_results.pointwise_outputs is not None:
+        for output_name in mc_results.pointwise_outputs.keys():
+            traj_key = f"output_{output_name}"
+            organized['pointwise_outputs']['trajectory'].append({'label': output_name, 'value': traj_key})
+    
+    # Add functional outputs (only in histograms)
+    if mc_results.functional_outputs is not None:
+        for output_name in mc_results.functional_outputs.keys():
+            hist_key = f"output_{output_name}"
+            organized['functional_outputs']['histogram'].append({'label': output_name, 'value': hist_key})
+    
+    # Add parameters (only in histograms)
+    if mc_results.params is not None:
+        for param_name in mc_results.params.keys():
+            hist_key = f"param_{param_name}"
+            organized['parameters']['histogram'].append({'label': param_name, 'value': hist_key})
+    
+    # Add initial states (only in histograms)
+    if mc_results.init_state is not None:
+        for state_name in mc_results.init_state.keys():
+            hist_key = f"init_{state_name}"
+            organized['initial_states']['histogram'].append({'label': state_name, 'value': hist_key})
+    
+    return organized
+
+
+def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max_histograms=6):
     """
     Create a comprehensive Dash web application for SimulationResults visualization.
     
@@ -551,6 +660,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
         mc_results: SimulationResults object
         max_samples: int - maximum number of samples to plot
         max_plots: int - maximum number of trajectory plots to show at once
+        max_histograms: int - maximum number of histograms to show at once
     
     Returns:
         Dash app instance
@@ -568,31 +678,45 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
         """Create trajectory plot for selected trajectories using the new plotting function"""
         return _plot_trajectories_from_simulation_results(mc_results, selected_keys, max_samples, 0.3)
     
-    # Collect all available trajectory data
+    # Organize all options by type
+    organized_options = _organize_options_by_type(mc_results)
+    
+    # Collect trajectory options and data in original format for compatibility
     trajectory_options = []
     trajectory_data = {}
     
-    # Add states
-    if mc_results.states is not None:
-        for state_name, state_data in mc_results.states.items():
-            key = f"state_{state_name}"
-            label = f"State: {state_name}"
-            trajectory_options.append({'label': label, 'value': key})
-            trajectory_data[key] = {'data': state_data, 'label': label}
-    
-    # Add pointwise outputs
-    if mc_results.pointwise_outputs is not None:
-        for output_name, output_data in mc_results.pointwise_outputs.items():
-            key = f"output_{output_name}"
-            label = f"Output: {output_name}"
-            trajectory_options.append({'label': label, 'value': key})
-            trajectory_data[key] = {'data': output_data, 'label': label}
+    # Collect all trajectory options
+    for category in ['states', 'pointwise_outputs']:
+        for option in organized_options[category]['trajectory']:
+            key = option['value']
+            name = option['label']
+            
+            if category == 'states':
+                full_label = f"State: {name}"
+                trajectory_data[key] = {'data': mc_results.states[name], 'label': full_label}
+            elif category == 'pointwise_outputs':
+                full_label = f"Output: {name}"  
+                trajectory_data[key] = {'data': mc_results.pointwise_outputs[name], 'label': full_label}
+            
+            trajectory_options.append({'label': full_label, 'value': key})
     
     # Select first few items by default (up to max_plots)
     default_selection = [opt['value'] for opt in trajectory_options[:max_plots]]
     
+    # Collect all histogram options
+    all_histogram_keys = []
+    for category in ['functional_outputs', 'parameters', 'initial_states']:
+        for option in organized_options[category]['histogram']:
+            all_histogram_keys.append(option['value'])
+    
+    # Select first few histograms by default (up to max_histograms)
+    default_histogram_selection = all_histogram_keys[:max_histograms]
+    
+    # Get histogram options for backward compatibility
+    histogram_options, _ = _get_histogram_options(mc_results)
+    
     # Create initial figures
-    histogram_fig = _plot_histograms_from_mc_results(mc_results)
+    histogram_fig = _plot_histograms_from_mc_results(mc_results, selected_histograms=default_histogram_selection)
     
     # Count total trajectories for slider
     total_trajectories = 0
@@ -606,7 +730,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
         html.H1("ODE Uncertainty Quantification Dashboard", 
                 style={'textAlign': 'center', 'marginBottom': 30}),
         
-        # Controls
+        # Main controls
         html.Div([
             html.Div([
                 html.Label("Number of samples to display:"),
@@ -618,7 +742,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
                     marks={i: str(i) for i in range(0, min(max_samples, total_trajectories)+1, 10)},
                     step=1
                 )
-            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
+            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'}),
             
             html.Div([
                 html.Label("Line opacity:"),
@@ -630,7 +754,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
                     marks={i/10: f'{i/10:.1f}' for i in range(1, 11, 2)},
                     step=0.1
                 )
-            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
+            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'}),
             
             html.Div([
                 html.Label("Display mode:"),
@@ -643,23 +767,90 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
                     value='trajectories',
                     style={'marginTop': '10px'}
                 )
-            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block'}),
-            
-            html.Div([
-                html.Label(f"Select plots to show (max {max_plots}):", style={'fontWeight': 'bold'}),
-                html.Div(id='selection-info', style={'fontSize': '12px', 'color': '#666', 'marginBottom': '5px'}),
-                dcc.Checklist(
-                    id='trajectory-selector',
-                    options=trajectory_options,
-                    value=default_selection,
-                    style={'maxHeight': '200px', 'overflowY': 'auto', 'fontSize': '14px'},
-                    inputStyle={'marginRight': '5px'},
-                    labelStyle={'display': 'block', 'marginBottom': '5px'}
-                )
-            ], style={'margin': '20px', 'width': '24%', 'display': 'inline-block', 'verticalAlign': 'top'})
+            ], style={'margin': '20px', 'width': '32%', 'display': 'inline-block'})
         ], style={'clearfix': 'both'}),
         
-        # Trajectory/Statistics plot (toggleable)
+        # Selection controls organized by type
+        html.H2("Selection Controls", style={'marginTop': 30, 'marginBottom': 10}),
+        html.Div([
+            # Trajectory selections
+            html.Div([
+                # States column
+                html.Div([
+                    html.H4("States", style={'textAlign': 'center', 'marginBottom': 10, 'color': '#1f77b4'}),
+                    dcc.Checklist(
+                        id='states-trajectory-selector',
+                        options=organized_options['states']['trajectory'],
+                        value=[opt['value'] for opt in organized_options['states']['trajectory'][:max_plots//2]],
+                        style={'fontSize': '14px'},
+                        inputStyle={'marginRight': '5px'},
+                        labelStyle={'display': 'block', 'marginBottom': '3px'}
+                    )
+                ], style={'width': '18%', 'display': 'inline-block', 'verticalAlign': 'top', 'margin': '10px'}),
+                
+                # Pointwise outputs column  
+                html.Div([
+                    html.H4("Pointwise Outputs", style={'textAlign': 'center', 'marginBottom': 10, 'color': '#ff7f0e'}),
+                    dcc.Checklist(
+                        id='pointwise-trajectory-selector',
+                        options=organized_options['pointwise_outputs']['trajectory'],
+                        value=[opt['value'] for opt in organized_options['pointwise_outputs']['trajectory'][:max_plots//2]],
+                        style={'fontSize': '14px'},
+                        inputStyle={'marginRight': '5px'},
+                        labelStyle={'display': 'block', 'marginBottom': '3px'}
+                    )
+                ], style={'width': '18%', 'display': 'inline-block', 'verticalAlign': 'top', 'margin': '10px'}),
+                
+                # Functional outputs column
+                html.Div([
+                    html.H4("Functional Outputs", style={'textAlign': 'center', 'marginBottom': 10, 'color': '#2ca02c'}),
+                    dcc.Checklist(
+                        id='functional-histogram-selector',
+                        options=organized_options['functional_outputs']['histogram'],
+                        value=[opt['value'] for opt in organized_options['functional_outputs']['histogram'][:max_histograms//3]],
+                        style={'fontSize': '14px'},
+                        inputStyle={'marginRight': '5px'},
+                        labelStyle={'display': 'block', 'marginBottom': '3px'}
+                    )
+                ], style={'width': '18%', 'display': 'inline-block', 'verticalAlign': 'top', 'margin': '10px'}),
+                
+                # Parameters column
+                html.Div([
+                    html.H4("Parameters", style={'textAlign': 'center', 'marginBottom': 10, 'color': '#d62728'}),
+                    dcc.Checklist(
+                        id='parameters-histogram-selector',
+                        options=organized_options['parameters']['histogram'],
+                        value=[opt['value'] for opt in organized_options['parameters']['histogram'][:max_histograms//3]],
+                        style={'fontSize': '14px'},
+                        inputStyle={'marginRight': '5px'},
+                        labelStyle={'display': 'block', 'marginBottom': '3px'}
+                    )
+                ], style={'width': '18%', 'display': 'inline-block', 'verticalAlign': 'top', 'margin': '10px'}),
+                
+                # Initial states column
+                html.Div([
+                    html.H4("Initial States", style={'textAlign': 'center', 'marginBottom': 10, 'color': '#9467bd'}),
+                    dcc.Checklist(
+                        id='initial-histogram-selector',
+                        options=organized_options['initial_states']['histogram'],
+                        value=[opt['value'] for opt in organized_options['initial_states']['histogram'][:max_histograms//3]],
+                        style={'fontSize': '14px'},
+                        inputStyle={'marginRight': '5px'},
+                        labelStyle={'display': 'block', 'marginBottom': '3px'}
+                    )
+                ], style={'width': '18%', 'display': 'inline-block', 'verticalAlign': 'top', 'margin': '10px'})
+            ], style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px', 'backgroundColor': '#f9f9f9'}),
+            
+            # Selection info
+            html.Div([
+                html.Div(id='trajectory-selection-info', style={'fontSize': '12px', 'color': '#666', 'display': 'inline-block', 'marginRight': '20px'}),
+                html.Div(id='histogram-selection-info', style={'fontSize': '12px', 'color': '#666', 'display': 'inline-block'})
+            ], style={'marginTop': '10px', 'textAlign': 'center'})
+        ])
+    ]
+    
+    # Add trajectory plot
+    components.extend([
         html.H2(id='trajectory-title', children="State and Output Trajectories", style={'marginTop': 40}),
         dcc.Graph(
             id='trajectories-plot',
@@ -670,15 +861,15 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
                 'displaylogo': False
             }
         )
-    ]
+    ])
     
     # Add histogram plot if data exists
-    if histogram_fig is not None:
+    if all_histogram_keys:
         components.extend([
             html.H2("Parameter and Functional Output Distributions", style={'marginTop': 40}),
             dcc.Graph(
                 id='histograms-plot',
-                figure=histogram_fig,
+                figure=_plot_histograms_from_mc_results(mc_results, selected_histograms=default_histogram_selection),
                 config={
                     'displayModeBar': True,
                     'displaylogo': False
@@ -688,30 +879,74 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
     
     app.layout = html.Div(components)
     
-    # Callback for updating selection info
+    # Callback for collecting all selected trajectories and updating info
     @app.callback(
-        [Output('selection-info', 'children'),
-         Output('trajectory-selector', 'options')],
-        [Input('trajectory-selector', 'value')]
+        [Output('trajectory-selection-info', 'children'),
+         Output('states-trajectory-selector', 'options'),
+         Output('pointwise-trajectory-selector', 'options')],
+        [Input('states-trajectory-selector', 'value'),
+         Input('pointwise-trajectory-selector', 'value')]
     )
-    def update_selection_info(selected_trajectories):
-        num_selected = len(selected_trajectories) if selected_trajectories else 0
-        info_text = f"Selected: {num_selected}/{max_plots} plots"
+    def update_trajectory_selection_info(selected_states, selected_pointwise):
+        all_selected = (selected_states or []) + (selected_pointwise or [])
+        num_selected = len(all_selected)
+        info_text = f"Trajectories selected: {num_selected}/{max_plots}"
         
         # Update options to disable/enable based on selection limit
-        updated_options = []
-        for opt in trajectory_options:
-            is_selected = opt['value'] in (selected_trajectories or [])
-            is_disabled = not is_selected and num_selected >= max_plots
-            
-            updated_opt = {
-                'label': opt['label'],
-                'value': opt['value'],
-                'disabled': is_disabled
-            }
-            updated_options.append(updated_opt)
+        def update_options(options, selected):
+            updated_options = []
+            for opt in options:
+                is_selected = opt['value'] in (selected or [])
+                is_disabled = not is_selected and num_selected >= max_plots
+                
+                updated_opt = {
+                    'label': opt['label'],
+                    'value': opt['value'],
+                    'disabled': is_disabled
+                }
+                updated_options.append(updated_opt)
+            return updated_options
         
-        return info_text, updated_options
+        updated_states = update_options(organized_options['states']['trajectory'], selected_states)
+        updated_pointwise = update_options(organized_options['pointwise_outputs']['trajectory'], selected_pointwise)
+        
+        return info_text, updated_states, updated_pointwise
+    
+    # Callback for collecting all selected histograms and updating info
+    @app.callback(
+        [Output('histogram-selection-info', 'children'),
+         Output('functional-histogram-selector', 'options'),
+         Output('parameters-histogram-selector', 'options'),
+         Output('initial-histogram-selector', 'options')],
+        [Input('functional-histogram-selector', 'value'),
+         Input('parameters-histogram-selector', 'value'),
+         Input('initial-histogram-selector', 'value')]
+    )
+    def update_histogram_selection_info(selected_functional, selected_params, selected_initial):
+        all_selected = (selected_functional or []) + (selected_params or []) + (selected_initial or [])
+        num_selected = len(all_selected)
+        info_text = f"Histograms selected: {num_selected}/{max_histograms}"
+        
+        # Update options to disable/enable based on selection limit
+        def update_options(options, selected):
+            updated_options = []
+            for opt in options:
+                is_selected = opt['value'] in (selected or [])
+                is_disabled = not is_selected and num_selected >= max_histograms
+                
+                updated_opt = {
+                    'label': opt['label'],
+                    'value': opt['value'],
+                    'disabled': is_disabled
+                }
+                updated_options.append(updated_opt)
+            return updated_options
+        
+        updated_functional = update_options(organized_options['functional_outputs']['histogram'], selected_functional)
+        updated_params = update_options(organized_options['parameters']['histogram'], selected_params)
+        updated_initial = update_options(organized_options['initial_states']['histogram'], selected_initial)
+        
+        return info_text, updated_functional, updated_params, updated_initial
     
     # Callback for updating trajectory plot and title
     @app.callback(
@@ -720,9 +955,13 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
         [Input('sample-slider', 'value'),
          Input('opacity-slider', 'value'),
          Input('display-mode', 'value'),
-         Input('trajectory-selector', 'value')]
+         Input('states-trajectory-selector', 'value'),
+         Input('pointwise-trajectory-selector', 'value')]
     )
-    def update_trajectory_plot(num_samples, opacity, display_mode, selected_trajectories):
+    def update_trajectory_plot(num_samples, opacity, display_mode, selected_states, selected_pointwise):
+        # Combine all selected trajectories
+        selected_trajectories = (selected_states or []) + (selected_pointwise or [])
+        
         if not selected_trajectories:
             # Return empty figure if nothing selected
             return go.Figure(), "No Trajectories Selected"
@@ -738,14 +977,14 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
             temp_pointwise = {}
             
             for key in selected_trajectories:
-                if key in trajectory_data:
-                    data = trajectory_data[key]['data']
-                    if key.startswith('state_'):
-                        state_name = key.replace('state_', '')
-                        temp_states[state_name] = data
-                    elif key.startswith('output_'):
-                        output_name = key.replace('output_', '')
-                        temp_pointwise[output_name] = data
+                if key.startswith('state_'):
+                    state_name = key.replace('state_', '')
+                    if mc_results.states and state_name in mc_results.states:
+                        temp_states[state_name] = mc_results.states[state_name]
+                elif key.startswith('output_'):
+                    output_name = key.replace('output_', '')
+                    if mc_results.pointwise_outputs and output_name in mc_results.pointwise_outputs:
+                        temp_pointwise[output_name] = mc_results.pointwise_outputs[output_name]
             
             if temp_states or temp_pointwise:
                 # Create temporary SimulationResults object
@@ -766,6 +1005,24 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8):
                 title = "No Valid Trajectories Selected"
         
         return fig, title
+    
+    # Add histogram callback if histogram options exist
+    if all_histogram_keys:
+        # Callback for updating histogram plot
+        @app.callback(
+            Output('histograms-plot', 'figure'),
+            [Input('functional-histogram-selector', 'value'),
+             Input('parameters-histogram-selector', 'value'),
+             Input('initial-histogram-selector', 'value')]
+        )
+        def update_histogram_plot(selected_functional, selected_params, selected_initial):
+            # Combine all selected histograms
+            selected_histograms = (selected_functional or []) + (selected_params or []) + (selected_initial or [])
+            
+            if not selected_histograms:
+                return go.Figure()
+            
+            return _plot_histograms_from_mc_results(mc_results, selected_histograms=selected_histograms)
     
     return app
 
