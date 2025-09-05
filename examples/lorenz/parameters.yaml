@@ -1,0 +1,16 @@
+sigma: 
+  dist_name: lognormal
+  dist_params:
+    loc: 2.303
+    scale: 0.02
+rho:
+  dist_name: lognormal
+  dist_params:
+    loc: 3.332
+    scale: 0.02
+beta:
+  dist_name: lognormal
+  dist_params:
+    loc: 0.981
+    scale: 0.02
+# beta: 2.667

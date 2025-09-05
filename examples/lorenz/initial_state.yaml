@@ -1,0 +1,8 @@
+# x: 10.0
+x: 
+  dist_name: lognormal
+  dist_params:
+    loc: 2.303
+    scale: 0.02
+y: 10.0
+z: 10.0

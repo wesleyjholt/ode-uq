@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ode-uq"
+dynamic = ["version"]
+description = 'Uncertainty quantification, sensitivity analysis, and inverse problem tools for dynamical systems.'
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Wesley Holt", email = "wesleyjholt@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+  "diffrax",
+  "numpyro",
+  "seaborn",
+  "pyyaml",
+  "plotly",
+  "dash",
+  "pandas",
+  "nbformat",
+  "SALib"
+]
+
+[project.urls]
+Documentation = "https://github.com/Wesley Holt/ode-uq#readme"
+Issues = "https://github.com/Wesley Holt/ode-uq/issues"
+Source = "https://github.com/Wesley Holt/ode-uq"
+
+[tool.hatch.version]
+path = "src/ode_uq/__about__.py"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/ode_uq tests}"
+
+[tool.coverage.run]
+source_pkgs = ["ode_uq", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/ode_uq/__about__.py",
+]
+
+[tool.coverage.paths]
+ode_uq = ["src/ode_uq", "*/ode-uq/src/ode_uq"]
+tests = ["tests", "*/ode-uq/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
