@@ -378,40 +378,43 @@ def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories
     
     num_plots = len(selected_keys)
     
-    # Create subplots with fixed vertical spacing
+    # Create subplots
     subplot_titles = [trajectory_data[key]['title'] for key in selected_keys]
-    # Fixed spacing between subplots (in fraction of total height)
-    fixed_spacing = 0.02  # 2% of total height between plots
     fig = sp.make_subplots(
         rows=num_plots, 
         cols=1,
         subplot_titles=subplot_titles,
         shared_xaxes=True,
-        vertical_spacing=fixed_spacing
+        vertical_spacing=0.15 / max(1, num_plots - 1) if num_plots > 1 else 0.1
     )
     
     # Get the actual number of samples to plot
     actual_samples = min(max_samples, min([trajectory_data[key]['data'].shape[0] for key in selected_keys]))
     
-    # Generate a color palette for consistent coloring across subplots
-    import plotly.colors as colors
-    color_palette = colors.qualitative.Plotly  # Default Plotly color sequence
-    # Extend the palette if we have more samples than colors
-    if actual_samples > len(color_palette):
-        color_palette = color_palette * (actual_samples // len(color_palette) + 1)
+    # Define colors that match the checkbox headers
+    STATES_COLOR = '#1f77b4'  # Blue - matches "States" header
+    POINTWISE_COLOR = '#ff7f0e'  # Orange - matches "Pointwise Outputs" header
     
     for i, key in enumerate(selected_keys):
         samples = trajectory_data[key]['data']
         title = trajectory_data[key]['title']
         
-        # Add trajectory lines with consistent colors
+        # Determine color based on trajectory type
+        if key.startswith('state_'):
+            trace_color = STATES_COLOR
+        elif key.startswith('output_'):
+            trace_color = POINTWISE_COLOR
+        else:
+            trace_color = STATES_COLOR  # Default to states color
+        
+        # Add trajectory lines with consistent colors per type
         for j in range(actual_samples):
             fig.add_trace(
                 go.Scatter(
                     x=mc_results.times,
                     y=samples[j],
                     mode='lines',
-                    line=dict(width=1, color=color_palette[j]),
+                    line=dict(width=1, color=trace_color),
                     opacity=opacity,
                     name=f'Sample {j+1}',
                     showlegend=False,  # No legend for trajectory plots
@@ -428,11 +431,9 @@ def _plot_trajectories_from_simulation_results(mc_results, selected_trajectories
     # Update x-axis label for bottom plot
     fig.update_xaxes(title_text="Time", row=num_plots, col=1)
     
-    # Update layout with fixed height per plot
-    fixed_height_per_plot = 300  # Fixed height in pixels per subplot
-    total_height = fixed_height_per_plot * num_plots
+    # Update layout
     fig.update_layout(
-        height=total_height,
+        height=300 * num_plots,
         hovermode='closest'
     )
     
@@ -877,7 +878,7 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
                     }
                 )
             ], style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '2%'})
-        ], style={'minHeight': '400px', 'overflow': 'visible'})
+        ])
     ]
     
     # Add histogram plot if data exists
@@ -1031,16 +1032,6 @@ def create_comprehensive_dashboard(mc_results, max_samples=100, max_plots=8, max
                 font=dict(size=14)
             )
         
-        # Ensure both plots have the same height for side-by-side display
-        num_subplots = len(selected_trajectories)
-        if num_subplots > 0:
-            fixed_height_per_plot = 300
-            total_height = fixed_height_per_plot * num_subplots
-            
-            # Update both figures to have the same height
-            samples_fig.update_layout(height=total_height)
-            statistics_fig.update_layout(height=total_height)
-        
         return samples_fig, statistics_fig
     
     # Add histogram callback if histogram options exist
@@ -1118,20 +1109,36 @@ def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
     state_names = list(state_dict.keys())
     num_states = len(state_names)
     
-    # Create subplots with fixed spacing
+    # Create subplots
     fig = sp.make_subplots(
         rows=num_states, 
         cols=1,
         subplot_titles=state_names,
         shared_xaxes=True,
-        vertical_spacing=0.02  # Fixed 2% spacing
+        vertical_spacing=0.1
     )
     
-    colors = ['rgba(0,100,80,0.2)', 'rgba(0,176,246,0.2)', 'rgba(231,107,243,1)', 
-              'rgba(0,176,246,0.2)', 'rgba(0,100,80,0.2)']
+    # Define colors that match the checkbox headers and trajectory types
+    STATES_COLOR = '#1f77b4'  # Blue - matches "States" header
+    POINTWISE_COLOR = '#ff7f0e'  # Orange - matches "Pointwise Outputs" header
+    
+    # Colors for percentile bands - now based on trajectory type
+    def get_percentile_colors(trajectory_type):
+        if trajectory_type == 'state':
+            # Blue-based colors for states
+            return ['rgba(31,119,180,0.2)', 'rgba(31,119,180,0.3)', 'rgba(31,119,180,1)', 
+                    'rgba(31,119,180,0.3)', 'rgba(31,119,180,0.2)']
+        else:  # pointwise outputs
+            # Orange-based colors for pointwise outputs
+            return ['rgba(255,127,14,0.2)', 'rgba(255,127,14,0.3)', 'rgba(255,127,14,1)', 
+                    'rgba(255,127,14,0.3)', 'rgba(255,127,14,0.2)']
     
     for i, state_name in enumerate(state_names):
         samples = state_dict[state_name]
+        
+        # Determine trajectory type from name prefix
+        trajectory_type = 'state' if state_name.startswith('State[') else 'pointwise'
+        colors = get_percentile_colors(trajectory_type)
         
         # Compute percentiles
         perc_values = np.percentile(samples, percentiles, axis=0)
@@ -1155,14 +1162,15 @@ def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
                 row=i+1, col=1
             )
         
-        # Plot median
+        # Plot median with trajectory-type-specific color
         median_idx = len(percentiles) // 2
+        median_color = colors[median_idx] if median_idx < len(colors) else colors[-1]
         fig.add_trace(
             go.Scatter(
                 x=times,
                 y=perc_values[median_idx],
                 mode='lines',
-                line=dict(color='rgba(231,107,243,1)', width=2),
+                line=dict(color=median_color, width=2),
                 name='Median' if i == 0 else None,
                 showlegend=(i == 0),
                 hovertemplate=f'{state_name} Median<br>Time: %{{x}}<br>Value: %{{y}}<extra></extra>'
@@ -1177,11 +1185,9 @@ def _plot_state_statistics(times, state_dict, percentiles=[5, 25, 50, 75, 95]):
     # Update x-axis label for bottom plot
     fig.update_xaxes(title_text="Time", row=num_states, col=1)
     
-    # Update layout with fixed height per plot
-    fixed_height_per_plot = 300  # Fixed height in pixels per subplot
-    total_height = fixed_height_per_plot * num_states
+    # Update layout
     fig.update_layout(
-        height=total_height,
+        height=300 * num_states,
         hovermode='closest'
     )
     
